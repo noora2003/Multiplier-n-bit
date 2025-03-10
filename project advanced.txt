@@ -1,0 +1,546 @@
+// stage 1
+// Noura khdour 1212072
+// multiplier using ripple carry adder 
+//`timescale 1ns/1ps
+
+
+
+//  1 bit full adder code
+module full_adder (a,b,cin,sumf,co);
+  input a,b,cin;
+  output sumf ,co;
+
+ wire w1,w2,w3;    //Internal connections
+  xor #(6ns) (w1, a, b); 
+  xor #(6ns) (sumf, w1, cin);  //Sum output
+  
+  and #(3ns) (w2, w1, cin); 
+  and #(3ns)(w3, a, b);
+  
+  or #(4ns) (co, w2, w3);   //carry output 
+        
+endmodule
+
+
+// 4 bit ripple carry adder
+module ripple_carry_adder (A,B,sum,carry_out,carry_in) ;
+  parameter WIDTH =4;
+  input [WIDTH-1:0] A,B;
+  input carry_in;
+  output [WIDTH-1:0] sum;
+  output carry_out ;
+  
+  wire [WIDTH:0] carry;
+  
+  assign carry[0]=carry_in;
+  genvar i;
+  generate
+    
+    for (i=0 ;i<WIDTH ;i=i+1) begin:FA_adding
+        full_adder FA (.cin(carry[i]),.a(A[i]),.b(B[i]),.sumf(sum[i]),.co(carry[i+1]));
+                       
+     end
+    endgenerate
+    assign carry_out =carry[WIDTH];
+
+  endmodule
+
+
+// D flip flop code
+module D_FF #(parameter WIDTH = 10) (
+    output reg [WIDTH-1:0] Q,
+    input [WIDTH-1:0] D,
+    input CLK ,
+    input clear     );
+
+  always @(posedge CLK or negedge clear) begin
+    if(~clear)
+      Q <= 0;
+    else
+        Q <= D;
+    end
+
+endmodule 
+
+
+     
+
+// multiplier  code
+
+module multiplier (x,y,result,clk,clr);
+
+  parameter multiplier_width = 8;
+  parameter multiplicand_width= 4;
+  
+  input clk,clr;
+  input [multiplier_width-1:0]y ;   // multiplier 
+  input [multiplicand_width-1:0] x;  //  multiplicand  
+  output [(multiplier_width+multiplicand_width-1):0] result; // product
+  
+ 
+  wire [multiplicand_width-1:0]x_and_y[multiplier_width-1:0]; // an array of 4 elements each element is y width  bit .x & y
+  wire [multiplicand_width - 1:0] product [multiplier_width-1:0]; // store the sum of  partial products 
+  wire [multiplier_width-1:0] carry; // it handle the bit that reuslt from addition of partial products
+  wire [(multiplier_width + multiplicand_width - 1):0] final_result; // for D flip flop
+  wire [(multiplier_width + multiplicand_width - 1):0] temp_result; // Intermediate result before D flip-flop
+  wire  [multiplier_width-1:0] y_dff; // output x from D flip flop
+  wire [multiplicand_width-1:0] x_dff; // output y from D flip flop
+  
+  
+  // for input x
+  D_FF #(.width(multiplier_width)) d_stage1 (.CLK(clk),.clear(clr),.D(y),.Q(y_dff)); 
+  
+  // for input y
+  D_FF #(.width(multiplicand_width)) d_stage2 (.CLK(clk),.clear(clr),.D(x),.Q(x_dff)); 
+
+
+  
+   
+   genvar i;
+  // partial product operation
+   generate
+     for(i = 0; i < multiplier_width ; i = i + 1) begin: partial_products
+       assign  x_and_y[i] =  x_dff & {multiplicand_width{y_dff[i]}}; 
+ end
+   endgenerate   
+  
+  
+  assign product[0]=x_and_y[0];
+  assign carry[0]=1'b0;
+  assign temp_result[0]=product[0][0]; // when y and x =0
+  
+  
+  genvar j;
+  generate 
+    for(j = 1; j < multiplier_width ; j = j+ 1) begin:rca_stage 
+    
+      ripple_carry_adder #(.WIDTH(multiplicand_width))  stage (
+      
+      //output
+      .sum(product[j]),
+    
+      .carry_out(carry[j]),
+      
+      // input
+      .carry_in(1'b0),
+      .A(x_and_y[j]),
+
+      .B({carry[j-1],product[j-1][multiplicand_width-1:1]}));
+
+      
+     assign temp_result[j]=product[j][0];
+      
+      end
+      
+   assign temp_result[(multiplier_width+multiplicand_width-1):multiplier_width]={carry[multiplier_width-1],product[multiplier_width-1][multiplicand_width-1:1]};
+
+                                                                                  
+           endgenerate
+  // use D flip flop to avoid the glitch
+  
+  D_FF #(.width(multiplier_width+multiplicand_width)) d_stage3 (.CLK(clk),.clear(clr),.D(temp_result),.Q(final_result));
+
+  
+   assign result=final_result;
+ 
+       endmodule
+                                                                                        
+////////////////////////////////////
+
+// testbench for stage 1
+// Noura khdour 1212072
+// testbench for multiplier using ripple carry adder
+
+
+//`timescale 1ns / 1ps
+
+module tb_multiplier_stage1;
+  
+  // parameters initialazed
+  parameter multiplier_width=32;// for y
+  parameter multiplicand_width=4; //  for x
+  
+  // input and aoutput initialized
+  reg clock,clear;
+  reg [multiplier_width-1:0]multiplier ;
+  reg [multiplicand_width-1:0]multiplicand;
+  wire [(multiplier_width+multiplicand_width-1):0] product;
+    
+    // Instantiate the multiplier module
+  multiplier #(.multiplier_width(multiplier_width), .multiplicand_width( multiplicand_width))mul_stage1 (
+        .y(multiplier),
+        .x(multiplicand),
+        .result(product),
+        .clk(clock),  
+    
+        .clr(clear));
+  
+  // for compare the values  
+   reg [(multiplier_width + multiplicand_width - 1):0] test;
+  
+  // latency: is the time that takes for the result to become valid after the inputs are applied
+
+  //to determine the maximum latency 
+   integer start_time,end_time,latency;
+  integer max_latency =0;
+
+  
+        
+
+ initial begin  
+      $display (" ---------- Noura khdour/1212072 ----------");
+
+      $display (" ---------- Multiplier using Ripple adder ---------- ");
+   
+
+   clock <= 1'b0;
+   clear <= 1'b0;
+   multiplier<=1'b0;
+   multiplicand <=1'b0; 
+   test <= 1'b0;
+   
+   //test cases using random
+   // #5
+   repeat (20) begin
+     multiplier = {$random} % ( multiplier_width); // to ensure that values within the range
+     multiplicand = {$random} %( multiplicand_width) ;
+     //multiplier = $random;
+    // multiplicand = $random  ;
+    
+     test = multiplicand * multiplier;// calculation value
+     
+     // find out the start time when the inputs are applied
+     start_time=$time;
+    
+     
+   // clear the multiplier before a new cases
+    
+     repeat (20) @(posedge clock);  
+    
+       clear <=1; 
+   
+
+                     
+     // find out the end time when a result is correct
+    
+     if (product == test) begin
+                    end_time = $time;
+                end
+
+            // Calculate latency
+     
+     latency = end_time - start_time;
+     // determine the maximum latency 
+            if (latency > max_latency) begin
+                max_latency = latency;
+            end
+     
+    
+   // compare between the result    
+   // #5
+      
+      if (test !== product) begin
+        $display ("Test faild at time =%0t for x= %0d and y= %0d, expected =%0d -->  result =%0d",$time,multiplicand,multiplier,test,product);
+        
+    end
+     
+    else begin
+      $display ("Test passed at time =%0t for x= %0d and y= %0d, expected =%0d -->  result =%0d",$time,multiplicand,multiplier,test,product);
+      
+     
+
+    end
+      
+ 
+     
+    end  // end the repeat
+   
+   
+   // find out the  maximum latency 
+   
+   $display("---------- Maximum latency for multiplier : %0d time units ----------", max_latency);
+
+   
+   #100 $finish;
+ end // end the initial
+  
+  
+ always #20 clock=~clock;
+ 
+endmodule
+  
+  ///////////////////////////////////
+
+// stage 2
+// Noura khdour 1212072
+// multiplier using carry look-ahead adder
+
+//`timescale 1ns / 1ps
+
+
+module carry_look_ahead_adder (A,B,sum,carry_in,carry_out);
+  
+  parameter WIDTH=4;
+  // initilize input and output
+  input [WIDTH-1:0]A,B;
+  input carry_in;
+  output[WIDTH-1:0] sum;
+  output carry_out;
+   
+  // initlizw wires 
+  wire [WIDTH-1:0] Gen;  // Generate= A.B
+  wire [WIDTH-1:0] pro;  // Propagate= A xor B 
+  wire [WIDTH:0] carry;
+  
+  genvar i;
+  generate
+  
+    assign carry[0]=carry_in;
+    
+    for(i=0;i<WIDTH;i=i+1) begin:for_loop_i
+  // calculate the carry ,generate propagate
+      and #(3ns)(Gen[i],A[i],B[i]);
+      xor #(6ns)(pro[i],A[i],B[i]);
+      assign carry[i+1]=pro[i]&carry[i] | Gen[i];
+    end
+    
+    assign carry_out=carry[WIDTH];
+  endgenerate
+  
+  
+  genvar j;
+  generate
+   
+    for(j=0;j<WIDTH;j=j+1) begin: for_loop_j
+     // calculate the sum
+      xor #(6ns) (sum[j],A[j],B[j],carry[j]);
+   end
+  endgenerate
+  
+endmodule
+
+
+// D flip flop code
+module D_FF #(parameter WIDTH = 10) (
+    output reg [WIDTH-1:0] Q,
+    input [WIDTH-1:0] D,
+    input CLK ,
+    input clear     );
+
+  always @(posedge CLK or negedge clear) begin
+    if(~clear)
+      Q <= 0;
+    else
+        Q <= D;
+    end
+
+endmodule  
+
+// multiplier  code
+
+module multiplier (x,y,result,clk,clr);
+
+  parameter multiplier_width = 8;
+  parameter multiplicand_width= 4;
+  
+  input clk,clr;
+  input [multiplier_width-1:0]y ;   // multiplier 
+  input [multiplicand_width-1:0] x;  //  multiplicand  
+  output [(multiplier_width+multiplicand_width-1):0] result; // product
+  
+ 
+  wire [multiplicand_width-1:0]x_and_y[multiplier_width-1:0]; // an array of 4 elements each element is y width  bit .x & y
+  wire [multiplicand_width - 1:0] product [multiplier_width-1:0]; // store the sum of  partial products 
+  wire [multiplier_width-1:0] carry; // it handle the bit that reuslt from addition of partial products
+  wire [(multiplier_width + multiplicand_width - 1):0] final_result; // for D flip flop
+  wire [(multiplier_width + multiplicand_width - 1):0] temp_result; // Intermediate result before D flip-flop
+  wire  [multiplier_width-1:0] y_dff; // output x from D flip flop
+  wire [multiplicand_width-1:0] x_dff; // output y from D flip flop
+  
+  
+  // for input x
+  D_FF #(.width(multiplier_width)) d_stage1 (.CLK(clk),.clear(clr),.D(y),.Q(y_dff)); 
+  
+  // for input y
+  D_FF #(.width(multiplicand_width)) d_stage2 (.CLK(clk),.clear(clr),.D(x),.Q(x_dff)); 
+
+
+  
+   
+   genvar i;
+  // partial product operation
+   generate
+     for(i = 0; i < multiplier_width ; i = i + 1) begin: partial_products
+       assign  x_and_y[i] =  x_dff & {multiplicand_width{y_dff[i]}}; 
+ end
+   endgenerate   
+  
+  
+  assign product[0]=x_and_y[0];
+  assign carry[0]=1'b0;
+  assign temp_result[0]=product[0][0]; // when y and x =0
+  
+  
+  genvar j;
+  generate 
+    for(j = 1; j < multiplier_width ; j = j+ 1) begin:rca_stage 
+    
+     carry_look_ahead_adder  #(.WIDTH(multiplicand_width))  stage (
+      
+      //output
+      .sum(product[j]),
+    
+      .carry_out(carry[j]),
+      
+      // input
+      .carry_in(1'b0),
+      .A(x_and_y[j]),
+
+      .B({carry[j-1],product[j-1][multiplicand_width-1:1]}));
+
+      
+     assign temp_result[j]=product[j][0];
+      
+      end
+      
+   assign temp_result[(multiplier_width+multiplicand_width-1):multiplier_width]={carry[multiplier_width-1],product[multiplier_width-1][multiplicand_width-1:1]};
+
+                                                                                  
+           endgenerate
+  // use D flip flop to avoid the glitch
+  
+  D_FF #(.width(multiplier_width+multiplicand_width)) d_stage3 (.CLK(clk),.clear(clr),.D(temp_result),.Q(final_result));
+
+  
+   assign result=final_result;
+ 
+       endmodule
+                                                                                        
+     
+
+
+ ////////////////////////
+
+// testbench for stage2
+// Noura khdour 1212072
+// test bench for multiplier using carry look-ahead adder  
+
+//`timescale 1ns / 1ps
+
+module tb_multiplier_stage1;
+  
+  // parameters initialazed
+  parameter multiplier_width=32;// for y
+  parameter multiplicand_width=4; //  for x
+  
+  // input and aoutput initialized
+  reg clock,clear;
+  reg [multiplier_width-1:0]multiplier ;
+  reg [multiplicand_width-1:0]multiplicand;
+  wire [(multiplier_width+multiplicand_width-1):0] product;
+    
+    // Instantiate the multiplier module
+  multiplier #(.multiplier_width(multiplier_width), .multiplicand_width( multiplicand_width))mul_stage2 (
+        .y(multiplier),
+        .x(multiplicand),
+        .result(product),
+        .clk(clock),  
+    
+        .clr(clear));
+  
+  // for compare the values  
+   reg [(multiplier_width + multiplicand_width - 1):0] test;
+  
+  // latency: is the time that takes for the result to become valid after the inputs are applied
+
+  //to determine the maximum latency 
+   integer start_time,end_time,latency;
+  integer max_latency =0;
+
+  
+        
+
+ initial begin  
+      $display (" ---------- Noura khdour/1212072 ----------");
+
+   $display (" ---------- Multiplier Using Carry Look Ahead Adder ---------- ");
+   
+
+   clock <= 1'b0;
+   clear <= 1'b0;
+   multiplier<=1'b0;
+   multiplicand <=1'b0; 
+   test <= 1'b0;
+   
+   //test cases using random
+   // #5
+   repeat (20) begin
+     multiplier = {$random} % ( multiplier_width); // to ensure that values within the range
+     multiplicand = {$random} %( multiplicand_width) ;
+     //multiplier = $random;
+    // multiplicand = $random  ;
+    
+     test = multiplicand * multiplier;// calculation value
+     
+     // find out the start time when the inputs are applied
+     start_time=$time;
+    
+     
+   // clear the multiplier before a new cases
+    
+     repeat (20) @(posedge clock);  
+    
+       clear <=1; 
+   
+
+                     
+     // find out the end time when a result is correct
+    
+     if (product == test) begin
+                    end_time = $time;
+                end
+
+            // Calculate latency
+     
+     latency = end_time - start_time;
+     // determine the maximum latency 
+            if (latency > max_latency) begin
+                max_latency = latency;
+            end
+     
+    
+   // compare between the result    
+   // #5
+      
+      if (test !== product) begin
+        $display ("Test faild at time =%0t for x= %0d and y= %0d, expected =%0d -->  result =%0d",$time,multiplicand,multiplier,test,product);
+        
+    end
+     
+    else begin
+      $display ("Test passed at time =%0t for x= %0d and y= %0d, expected =%0d -->  result =%0d",$time,multiplicand,multiplier,test,product);
+      
+     
+
+    end
+      
+ 
+     
+    end  // end the repeat
+   
+   
+   // find out the  maximum latency 
+   
+   $display("---------- Maximum latency for multiplier : %0d time units ----------", max_latency);
+
+   
+   
+   
+   
+   #1000 $finish;
+ end // end the initial
+  
+  
+ always #15 clock=~clock;
+ 
+endmodule
